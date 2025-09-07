@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>CROSS DOCKING 2.0</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background: #f5f7fa; margin: 0; color: #003366; }
+    .header {
+      position: relative;
+      height: 100px;
+      margin-bottom: 20px;
+    }
+    .header .logo {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      max-width: 160px;
+      height: auto;
+    }
+    .header .titulo {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      margin: 0;
+      font-size: 42px;
+      color: #003366;
+    }
+    .progress-container {
+      width: 250px;
+      background: #ddd;
+      border-radius: 8px;
+      overflow: hidden;
+      height: 28px;
+      margin: 5px 0;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #0055A4, #00AEEF);
+      text-align: center;
+      color: #fff;
+      line-height: 28px;
+      font-weight: bold;
+      font-size: 12px;
+    }
+    .contador {
+      font-size: 12px;
+      text-align: left;
+      margin-bottom: 10px;
+      color: #0055A4;
+    }
+    button {
+      background: #0055A4;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+    button:hover {
+      background: #003366;
+    }
+    input[type="text"], input[type="file"] {
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; background: #fff; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+    th { background: #0055A4; color: #fff; }
+    @media(max-width: 600px){
+      .header { height: auto; }
+      .header .logo { max-width: 120px; margin-top: 10px; position: relative; left: 0; top: 0; }
+      .header .titulo { position: relative; transform: none; left: 0; top: 0; text-align: center; display: block; margin-top: 10px; }
+      .progress-container { width: 100%; }
+      table, th, td { font-size: 12px; }
+      input, button { width: 100%; margin: 3px 0; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Cabeçalho com logo -->
+  <div class="header">    
+    <img class="logo" src="https://superfrio.com.br/wp-content/uploads/2023/07/Logo-nova-minimal.png" alt="Logo Superfrio">
+    <h1 class="titulo">CrossDocking 2.0</h1>
+  </div>
+
+  <!-- Barras de progresso lado a lado -->
+  <div style="display: flex; gap: 20px; margin-bottom: 10px;">
+    <div>
+      <div class="progress-container">
+        <div id="barraCaixas" class="progress-bar">0%</div>
+      </div>
+      <div id="contadorCaixas" class="contador">0 de 0 caixas</div>
+    </div>
+    <div>
+      <div class="progress-container">
+        <div id="barraItens" class="progress-bar">0%</div>
+      </div>
+      <div id="contadorItens" class="contador">0 de 0 itens</div>
+    </div>
+    <div>
+      <div class="progress-container">
+        <div id="barraRotas" class="progress-bar">0%</div>
+      </div>
+      <div id="contadorRotas" class="contador">0 de 0 rotas</div>
+    </div>
+  </div>
+
+  <!-- Controles -->
+  <input type="text" id="codigoInput" placeholder="Bipe o código aqui">
+  <button onclick="confirmarCodigo()">Confirmar</button>
+  <button id="btnResetar" onclick="resetar()">Resetar</button>
+  <button onclick="logout()">Sair</button>
+  <button onclick="exportarCSV()">Exportar CSV</button>
+  <label><input type="checkbox" id="habilitarImpressao"> Habilitar Impressão</label>
+  <button onclick="abrirEtiqueta()">Modelo Etiqueta</button>
+  <input type="file" id="inputExcel" accept=".xlsx, .xls">
+
+  <!-- Tabela -->
+  <table id="tabela">
+    <thead>
+      <tr>
+        <th>Sequencia</th>
+        <th>Código do produto</th>
+        <th>Destinatário Nome</th>
+        <th>Destinatario Cidade</th>
+        <th>Produtos/Quantidade</th>
+        <th>Separado</th>
+        <th>Saldo</th>
+        <th>Progresso</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <!-- Histórico -->
+  <h3 style="color:#003366;">Histórico de Bips</h3>
+  <ul id="historico"></ul>
+  <!-- Botão exportar histórico, destacado abaixo do histórico -->
+  <button style="margin-top:10px; margin-bottom:20px; background:#00AEEF;" onclick="baixarHistorico()">Exportar Histórico</button>
+
+  <script>
+    let entregas = [];
+    let historico = [];
+    let ultimoIndiceSeparado = null;
+
+    // Lista de colunas obrigatórias (use em todo o código)
+    const colunasObrigatorias = [
+      "Sequencia",
+      "Codigo do produto",
+      "Placa do Veiculo",
+      "Destinatário Nome",
+      "Destinatário Endereço",
+      "Destinatário Endereço Número",
+      "Destinatario Bairro",
+      "Destinatario Cidade",
+      "Destinatario Estado",
+      "Nº da Nota Fiscal",
+      "Nota Fiscal/Volumes",
+      "Entregas",
+      "Produtos/Quantidade"
+    ];
+
+    function handleFile(e) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const sheetRaw = workbook.Sheets[sheetName];
+
+        const cabecalho = XLSX.utils.sheet_to_json(sheetRaw, { header: 1 })[0] || [];
+        const faltando = colunasObrigatorias.filter(col => !cabecalho.includes(col));
+        if (faltando.length > 0) {
+          alert("A planilha está faltando as seguintes colunas obrigatórias:\n\n" + faltando.join("\n"));
+          return;
+        }
+
+        const sheet = XLSX.utils.sheet_to_json(sheetRaw);
+
+        // 1. Pegue todas as placas únicas
+        const placasUnicas = [...new Set(sheet.map(row => row["Placa do Veiculo"]))];
+        // 2. Gere as chaves para cada placa
+        const mapaChaves = gerarChaves(placasUnicas);
+
+        entregas = [];
+        let linhasInvalidas = 0;
+
+        sheet.forEach(row => {
+          let camposFaltando = colunasObrigatorias.filter(col => !row[col] && row[col] !== 0);
+          if (camposFaltando.length > 0) {
+            linhasInvalidas++;
+            return;
+          }
+
+          let entrega = {};
+          colunasObrigatorias.forEach(col => {
+            entrega[col] = row[col];
+          });
+
+          entrega.separado = 0;
+          entrega.saldo = Number(entrega["Produtos/Quantidade"]) - entrega.separado;
+          // 3. Adicione a chave oculta
+          entrega.chave = mapaChaves[entrega["Placa do Veiculo"]];
+          entregas.push(entrega);
+        });
+
+        atualizarTabela();
+        atualizarBarrasTotais();
+        salvarDados();
+
+        if (linhasInvalidas > 0) {
+          alert(`${linhasInvalidas} linha(s) da planilha foram ignoradas por falta de dados obrigatórios.`);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function atualizarTabela() {
+      const tbody = document.querySelector("#tabela tbody");
+      tbody.innerHTML = "";
+
+      entregas.forEach(entrega => {
+        let saldo = Number(entrega["Produtos/Quantidade"]) - entrega.separado;
+        let progresso = Math.min(100, (entrega.separado / Number(entrega["Produtos/Quantidade"])) * 100);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${entrega["Sequencia"]}</td>
+          <td>${entrega["Codigo do produto"]}</td>
+          <td>${entrega["Destinatário Nome"]}</td>
+          <td>${entrega["Destinatario Cidade"]}</td>
+          <td>${entrega["Produtos/Quantidade"]}</td>
+          <td>${entrega.separado}</td>
+          <td>${saldo}</td>
+          <td>
+            <div class="progress-container" style="height:18px; width:100%;">
+              <div class="progress-bar" style="width:${progresso}%">${progresso.toFixed(0)}%</div>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function confirmarCodigo() {
+      const codigo = document.getElementById("codigoInput").value.trim();
+      if (!codigo) return;
+
+      // Busca o índice da entrega correta
+      const idx = entregas.findIndex(e => 
+        e["Codigo do produto"] == codigo && 
+        (Number(e["Produtos/Quantidade"]) - e.separado) > 0
+      );
+      const entregaObj = idx >= 0 ? entregas[idx] : null;
+
+      if (entregaObj) {
+        entregaObj.separado += 1;
+        ultimoIndiceSeparado = idx;
+        const timestamp = new Date().toLocaleString();
+        historico.unshift(`${timestamp} - ${codigo} - ${entregaObj["Destinatário Nome"]} - ${entregaObj["Destinatario Cidade"]}`);
+        atualizarTabela();
+        atualizarHistorico();
+        atualizarBarrasTotais();
+        salvarDados();
+
+        if (document.getElementById("habilitarImpressao").checked) {
+          abrirEtiqueta(); // Gera etiqueta normalmente
+        }
+      } else {
+        alert("Produto totalmente separado ou código não encontrado!");
+        if (document.getElementById("habilitarImpressao").checked) {
+          abrirEtiquetaPS(); // Gera etiqueta especial PS
+        }
+      }
+
+      document.getElementById("codigoInput").value = "";
+    }
+
+    // Etiqueta especial para produto separado
+    function abrirEtiquetaPS() {
+      const novaAba = window.open("", "_blank");
+      novaAba.document.write(`
+        <!DOCTYPE html>
+        <html lang="pt-BR">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Etiqueta Produto Separado</title>
+          <style>
+            body { margin: 0; padding: 0; }
+            .etiqueta-ps {
+              width: 100mm; height: 50mm; background: #000;
+              display: flex; align-items: center; justify-content: center;
+              color: #fff; font-family: Arial, sans-serif;
+            }
+            .ps-text {
+              font-size: 60pt; font-weight: bold; letter-spacing: 10px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="etiqueta-ps">
+            <span class="ps-text">PS</span>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    function atualizarHistorico() {
+      const ul = document.getElementById("historico");
+      ul.innerHTML = "";
+      historico.slice(0, 10).forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        ul.appendChild(li);
+      });
+    }
+
+    function atualizarBarrasTotais() {
+      // Caixas: cada entrega é uma caixa
+      let totalCaixas = entregas.length;
+      let caixasSeparadas = entregas.filter(e => e.separado >= Number(e["Produtos/Quantidade"])).length;
+
+      // Itens: soma total de itens planejados e separados
+      let totalItens = entregas.reduce((acc, e) => acc + Number(e["Produtos/Quantidade"]), 0);
+      let itensSeparados = entregas.reduce((acc, e) => acc + e.separado, 0);
+
+      // Rotas: quantidade de chaves únicas (placas)
+      const chavesUnicas = [...new Set(entregas.map(e => e.chave))];
+      let totalRotas = chavesUnicas.length;
+      // Rotas concluídas: todas as entregas daquela chave estão separadas
+      let rotasConcluidas = chavesUnicas.filter(chave => {
+        const entregasRota = entregas.filter(e => e.chave === chave);
+        return entregasRota.every(e => e.separado >= Number(e["Produtos/Quantidade"]));
+      }).length;
+
+      let progressoCaixas = totalCaixas ? (caixasSeparadas / totalCaixas) * 100 : 0;
+      let progressoItens = totalItens ? (itensSeparados / totalItens) * 100 : 0;
+      let progressoRotas = totalRotas ? (rotasConcluidas / totalRotas) * 100 : 0;
+
+      document.getElementById("barraCaixas").style.width = progressoCaixas + "%";
+      document.getElementById("barraCaixas").textContent = progressoCaixas.toFixed(0) + "%";
+      document.getElementById("contadorCaixas").textContent = `${caixasSeparadas} de ${totalCaixas} caixas`;
+
+      document.getElementById("barraItens").style.width = progressoItens + "%";
+      document.getElementById("barraItens").textContent = progressoItens.toFixed(0) + "%";
+      document.getElementById("contadorItens").textContent = `${itensSeparados} de ${totalItens} itens`;
+
+      document.getElementById("barraRotas").style.width = progressoRotas + "%";
+      document.getElementById("barraRotas").textContent = progressoRotas.toFixed(0) + "%";
+      document.getElementById("contadorRotas").textContent = `${rotasConcluidas} de ${totalRotas} rotas`;
+    }
+
+    function resetar() {
+      entregas = [];
+      historico = [];
+      ultimoIndiceSeparado = null;
+      atualizarTabela();
+      atualizarHistorico();
+      atualizarBarrasTotais();
+      document.getElementById("inputExcel").value = "";
+      localStorage.removeItem("impressoraEtiqueta"); // Limpa configuração de impressora
+      salvarDados();
+    }
+
+    function exportarCSV() {
+      let csvContent = "data:text/csv;charset=utf-8,";
+      csvContent += "Código,Entrega,Planejado,Separado,Saldo\n";
+      entregas.forEach(e => {
+        const saldo = Number(e["Produtos/Quantidade"]) - e.separado;
+        csvContent += `${e["Codigo do produto"]},${e["Destinatário Nome"]},${e["Produtos/Quantidade"]},${e.separado},${saldo}\n`;
+      });
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "relatorio_bips.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function abrirEtiqueta() {
+      if (ultimoIndiceSeparado === null || !entregas[ultimoIndiceSeparado]) {
+        alert("Nenhuma separação realizada para gerar etiqueta.");
+        return;
+      }
+      // Salva os dados da entrega no localStorage
+      localStorage.setItem("dadosEtiqueta", JSON.stringify(entregas[ultimoIndiceSeparado]));
+      // Abre o arquivo etiqueta.html em nova aba
+      window.open("etiqueta.html", "_blank");
+    }
+    //window.onload = function() { window.print(); }
+      
+    function salvarDados() {
+      localStorage.setItem("entregas", JSON.stringify(entregas));
+      localStorage.setItem("historico", JSON.stringify(historico));
+      localStorage.setItem("ultimoIndiceSeparado", JSON.stringify(ultimoIndiceSeparado));
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const usuarioLogado = JSON.parse(localStorage.getItem("usuarioLogado"));
+      if (!usuarioLogado) {
+        window.location.href = "index.html";
+        return;
+      }
+
+      // Carrega os dados salvos, se existirem
+      const entregasSalvas = localStorage.getItem("entregas");
+      const historicoSalvo = localStorage.getItem("historico");
+      const ultimoSalvo = localStorage.getItem("ultimoIndiceSeparado");
+      if (entregasSalvas) entregas = JSON.parse(entregasSalvas);
+      if (historicoSalvo) historico = JSON.parse(historicoSalvo);
+      if (ultimoSalvo) ultimoIndiceSeparado = JSON.parse(ultimoSalvo);
+
+      atualizarTabela();
+      atualizarHistorico();
+      atualizarBarrasTotais();
+
+      // Permite importação apenas para Supervisor
+      const inputExcel = document.getElementById('inputExcel');
+      if (usuarioLogado.perfil !== "Supervisor") {
+        inputExcel.disabled = true;
+        inputExcel.title = "Somente o Supervisor pode importar arquivos.";
+      } else {
+        inputExcel.addEventListener('change', handleFile);
+      }
+
+      // Bloqueia botão Resetar se perfil = Operador
+      if (usuarioLogado.perfil === "Operador") {
+        const btnResetar = document.getElementById("btnResetar");
+        if (btnResetar) btnResetar.style.display = "none";
+      }
+    });
+
+    function logout() {
+      localStorage.removeItem("usuarioLogado");
+  window.location.href = "index.html";
+    }
+
+    function gerarChaves(placas) {
+      const letras = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      let chaves = {};
+      let count = 0;
+      placas.forEach(placa => {
+        let letra = letras[Math.floor(count / 9)];
+        let numero = (count % 9) + 1;
+        chaves[placa] = `${letra}${numero}`;
+        count++;
+      });
+      return chaves;
+    }
+
+    document.getElementById("codigoInput").addEventListener("keydown", function(event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        confirmarCodigo();
+      }
+    });
+
+    function baixarHistorico() {
+      // Recupera o histórico completo do localStorage
+      let historico = [];
+      if (localStorage.getItem("historico")) {
+        historico = JSON.parse(localStorage.getItem("historico"));
+      }
+      if (!historico.length) {
+        alert("Nenhum bip realizado!");
+        return;
+      }
+
+      // Monta o conteúdo CSV
+      let csvContent = "data:text/csv;charset=utf-8,Data/Hora;Código;Destinatário;Cidade\n";
+      historico.forEach(linha => {
+        csvContent += linha.replace(/ - /g, ";") + "\n";
+      });
+
+      // Cria e baixa o arquivo
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "historico_bips.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+</body>
+</html>
